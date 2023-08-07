@@ -1,0 +1,287 @@
+---
+output:
+  bookdown::pdf_book:
+    toc_depth: 2
+    fig_height : 5
+    fig_width : 8
+    citation_package: natbib
+    includes:
+       in_header: import.sty 
+       before_body: title.sty
+documentclass: report
+classoption : oneside
+bibliography: references.bib
+csl: ama.csl
+geometry: [top=1in, bottom=1in, right=1in, left=1.5in]
+linestretch: 2
+fontsize: 12pt
+---
+
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  warning = FALSE
+)
+```
+
+# Introduction
+Welcome to the 'gestimation' package vignette. This vignette provides an overview of the main functions offered by the 'gestimation' package, which is designed to facilitate effect estimation using the 'g' method. The package offers three key functions: exposure_modelling_standardization, outcome_modelling_standardization, and dr (doubly robust estimator), along with a utility function bootstrap_ci for obtaining 95% bootstrap confidence intervals. Let's dive into each function and its usage.
+
+## A unique advantage:
+One of the standout features of the 'gestimation' package is its seamless integration with data manipulation, offering an experience similar to using popular 'dplyr' functions. While other packages may focus solely on estimation techniques, 'gestimation' goes a step further by providing users with the ability to manipulate their dataset effortlessly within the estimation workflow. This unique advantage sets 'gestimation' apart from its counterparts in the field.
+
+Please install and load the package
+
+```{r setup}
+#devtools::install_github('eraf/gestimation')
+library(gestimation)
+``` 
+
+
+# Exposure modelling based standardization 
+
+## Exposure or Treatment Model 
+
+The exposure or treatment model is defined as follows, where the probability of treatment $A$ being $1$ is determined by a logistic function of covariates $L$:
+
+$$
+E(A | L) = P(A = 1 | L) = \exp(\beta_0 + \beta_1 L_1 + \cdots + \beta_q L_q) / (1 + \exp(\beta_0 + \beta_1 L_1 + \cdots + \beta_q L_q)) = e(L)
+$$
+
+## Average Treatment Effect (ATE) 
+
+The average treatment effect is defined as the difference in the expected outcomes between the treated $A=1$ and untreated $A=0$ groups:
+$$
+ATE = E(Y | A = 1) - E(Y | A = 0)
+$$
+
+The expected value of the product of treatment $A$ and outcome $Y$, given the exposure model, is equivalent to the expected outcome for the treated group:
+\begin{equation}
+E[AY e(L)] = E(Y | A = 1)
+\end{equation}
+Similarly, the expected value of the product of $(1-A)$ and $Y$, given the exposure model, is equivalent to the expected outcome for the untreated group:
+\begin{equation}
+E[(1 - A)Y e(L)] = E(Y | A = 0)
+\end{equation}
+
+## Standardization of ATE with Exposure Modeling 
+
+The ATE can be expressed using the exposure model and the estimated probabilities of treatment. The formula for the ATE becomes:
+\begin{equation}
+ATE = \sum [A_iY_i / \hat{e}(L_i)] / \sum [A_i / \hat{e}(L_i)] - \sum [(1 - A_i)Y_i / (1 - \hat{e}(L_i))] / \sum [(1 - A_i) / (1 - \hat{e}(L_i))]
+\end{equation}
+This formula involves weights $W_i(1)$ and $W_i(0)$, which are calculated based on the estimated probabilities of treatment and the complement of those probabilities.
+
+## Summarized Formulas 
+Exposure Model:
+$$
+E(A | L) = e(L)
+$$
+$$
+ATE = \sum [A_iY_i / \hat{e}(L_i)] / \sum [A_i / \hat{e}(L_i)] - \sum [(1 - A_i)Y_i / (1 - \hat{e}(L_i))] / \sum [(1 - A_i) / (1 - \hat{e}(L_i))]
+$$
+$$
+Weights: W_i(1) = A_i / \sum [A_i / \hat{e}(L_i)], W_i(0) = (1 - A_i) / \sum [(1 - A_i) / (1 - \hat{e}(L_i))]
+$$
+
+These formulas describe the standardization process with exposure modeling and how it can be used to estimate the average treatment effect while accounting for the treatment assignment probabilities based on the exposure model. 
+(@hernan2010causal)
+
+## Function description 
+
+The exposure_modelling_standardization function calculates the effect of a binary exposure (treatment) on the outcome using the exposure-modeling approach. It takes the following inputs:
+
+data: A data frame containing variables specified in the provided exposure_model.
+exposure_model: The exposure model.
+y: The outcome variable.
+The function returns a tibble containing risks for exposure levels 0 and 1, Risk Difference, Risk Ratio, and Odds Ratio.
+
+## R example 
+
+The BRFSS 2019 data has been modified and included in the package for the examples. (@cdc2019codebook)
+
+```{r}
+
+library(dplyr)
+
+brfss0 <- brfss %>% filter(gt65 == 0)
+
+
+exposure_mod <- glm(insured ~ female + whitenh + blacknh + hisp + multinh +
+                      gthsedu + rural, family = "binomial",data = brfss0)
+
+exposure_modeling_standardization(data = brfss0,
+                                  exposure_model =  exposure_mod,
+                                  y = flushot)
+``` 
+
+# Outcome Modeling Based Standardization 
+
+## Theoretical backgroud 
+
+It is a methodology for estimating mean outcomes in the context of causal inference using a parametric modeling approach. The goal is to estimate the conditional mean of an outcome variable Y given specific conditions on treatment $(A)$, confounders $(L)$, and adjusting for selection bias $(C)$. This is achieved by standardizing the mean outcome to the distribution of the confounders. Here's a summary of the theory and the associated formulas:
+
+## Estimating Conditional Mean via Parametric Modeling 
+
+For high-dimensional data with numerous confounders, nonparametric estimation of conditional means might be infeasible due to limited observations. Therefore, a parametric approach is used. The conditional mean is modeled using a regression function:
+$$
+E(Y | A = a, C = 0, L = l) = f(a, l)
+$$
+This regression function might include terms such as squared continuous variables of $L$ and interactions.
+
+## Standardization of Mean Outcome 
+
+The standardized mean outcome is defined as a weighted average of the conditional means, where the weights are based on the probability mass or density function that an individual belongs to a specific stratum $(L)$. This approach avoids the need for nonparametric estimation of the distribution of $L$.
+$$
+Standardized \space Mean = \sum [P(L = l) \times E(Y | A = a,
+C = 0, L = l)]
+$$
+
+## Steps for Computing Standardized Mean Outcomes 
+
+Step 1: Fit the conditional regression model to estimate the conditional means.
+
+Step 2: Create a copy of the original data and set $A=1$ for all individuals. Calculate the estimated mean for this modified dataset.
+$$
+Estimated \space Counterfactual \space Mean (A = 1, C = 0) = (1 / n) \times \sum [E(Y | A = 1, C = 0, L = l)]
+$$
+
+Step 3: Repeat Step 2, but now set $A=0$ for all individuals.
+$$
+Estimated \space Counterfactual \space Mean (A = 0, C = 0) = (1 / n) \times \sum [E(Y | A = 0, C = 0, L = l)]
+$$
+
+These formulas and steps outline a methodology for estimating mean outcomes while accounting for confounders and treatment effects through a parametric modeling approach. The goal is to provide an alternative to nonparametric estimation, especially in cases of high-dimensional data where direct estimation of conditional means might be challenging. 
+(@hernan2010causal)
+
+## Function description 
+
+The outcome_modelling_standardization function calculates the effect of a binary exposure (treatment) on the outcome using the outcome-modeling approach. It takes the following inputs:
+
+data: A data frame containing variables specified in the provided outcome_model.
+outcome_model: The outcome model.
+exposure: The exposure (treatment) variable.
+The function returns a tibble containing risks for exposure levels 0 and 1, Risk Difference, Risk Ratio, and Odds Ratio.
+
+## Example in R 
+
+```{r}
+library(dplyr)
+
+brfss0 <- brfss %>% filter(gt65 == 0)
+
+outcome_mod <- glm(flushot ~ insured + female + whitenh + blacknh + hisp +
+                     multinh + gthsedu + rural, family = "binomial",
+                   data = brfss0)
+
+outcome_modeling_standardization(data = brfss0, outcome_model =  outcome_mod,
+                                 exposure =  insured)
+``` 
+
+# Doubly Robust Estimator 
+
+Doubly Robust estimator is a technique used in causal inference to account for missing data and potential biases in parameter estimates. It combines two approaches: modeling the relationship between covariates and the outcome and modeling the probabilities of missingness given the covariates.
+
+## Formulas and Steps 
+
+The goal is to estimate the conditional mean of an outcome variable $Y$, given specific treatment $(A)$, confounder $(L)$, and selection bias $(C)$ circumstances.
+
+The Doubly Robust estimator involves two models: 
+The treatment model: 
+$$
+e(L) = P(A = 1 | L) \quad (\text{probability of treatment given covariates } L)
+$$
+The outcome model: 
+$$
+E(Y | L, A = 1) \quad (\text{conditional mean of Y given covariates } L \text{ and } A = 1)
+$$
+
+The estimator is applied in the following steps:
+
+Calculate the estimated mean for the treated group $(A=1)$:
+$$
+E(\hat{Y} _{a=1}) = (1 / n) \times \sum [A_iY_i / \hat{e}(L_i) - A_i - \hat{e}(L_i) / \hat{e}(L_i) \times E(Y_i | L_i, A_i = 1)]
+$$
+
+Similarly, calculate the estimated mean for the untreated group $(A=0)$:
+$$
+E(\hat{Y} _{a=0}) = (1 / n) \times \sum [(1 - A_i)Y_i / (1 - \hat{e}(L_i)) - A_i - \hat{e}(L_i) / (1 - \hat{e}(L_i)) \times E(Y_i | L_i, A_i = 0)]
+$$
+
+The Doubly Robust estimator combines these estimates to provide a consistent estimate of the causal effect, even if only one of the models (treatment or outcome) is correctly specified. 
+
+## Summary 
+
+The Doubly Robust estimator is a powerful technique that addresses missing data and covariate relationships simultaneously, leading to more robust causal inference. It allows for accurate parameter estimation by leveraging both the treatment model and the outcome model, resulting in consistent estimates of causal effects. 
+(@bang2005doubly) 
+
+## Function description 
+
+The dr function provides a doubly robust estimator to estimate the effect. It takes the following inputs:
+
+data: A data frame containing variables specified in both the exposure_model and outcome_model.
+exposure: The exposure (treatment) variable.
+y: The outcome variable.
+exposure_model: The exposure model.
+outcome_model: The outcome model.
+id: The unique identifier of subjects.
+The function returns a tibble containing risks for exposure levels 0 and 1, Risk Difference, Risk Ratio, and Odds Ratio.
+
+## R example 
+
+```{r}
+library(dplyr)
+library(broom)
+brfss0 <- brfss %>% filter(gt65 == 0)
+
+exposure_mod <- glm(insured ~ female + whitenh + blacknh + hisp + multinh + gthsedu + rural, family = "binomial",data = brfss)
+outcome_mod <- glm(flushot ~ insured + female + whitenh + blacknh + hisp + multinh + gthsedu + rural, family = "binomial",
+                   data = brfss0)
+
+brfss0 %>%
+  mutate(id = row_number()) %>% 
+  dr(exposure = insured, y = flushot, outcome_model = outcome_mod, 
+     exposure_model = exposure_mod, id = "id")
+
+``` 
+
+
+# Bootstrap Confidence Intervals 
+
+The bootstrap_ci function calculates 95% bootstrap confidence intervals for the estimated effect. It takes the following inputs:
+
+df: A data frame containing variables specified in the provided formula.
+f: The g-estimation method.
+outmod: The outcome model.
+trtmod: The exposure model.
+x: The exposure/treatment variable.
+y: The outcome variable.
+id: The unique identifier variable of subjects.
+The function returns a tibble containing bootstrap confidence intervals for Risk Difference, Risk Ratio, and Odds Ratio.
+
+## R example 
+
+```{r}
+library(dplyr)
+library(broom)
+
+brfss0 <- brfss %>% filter(gt65 == 0)
+
+exposure_mod <- glm(insured ~ female + whitenh + blacknh + hisp + multinh + gthsedu + rural, family = "binomial",data = brfss)
+outcome_mod <- glm(flushot ~ insured + female + whitenh + blacknh + hisp + multinh + gthsedu + rural, family = "binomial", data = brfss0)
+
+bootstrap_ci(df = brfss0, f = exposure_modeling_standardization,
+  trtmod = exposure_mod, y = flushot)
+
+brfss0 %>%
+  mutate(id = row_number()) %>% 
+  bootstrap_ci(f = dr, trtmod = exposure_mod, outmod = outcome_mod,
+  x = insured, y = flushot, id = 'id')
+
+``` 
+
+# Conclusion 
+
+In summary, the 'gestimation' package provides a suite of functions for effect estimation using the 'g' method. You can choose between exposure modeling, outcome modeling, or a doubly robust estimator, and then obtain bootstrap confidence intervals for your estimates. We hope this vignette helps you effectively utilize the 'gestimation' package for your estimation needs.
